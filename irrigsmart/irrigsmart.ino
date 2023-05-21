@@ -55,6 +55,7 @@ int count = 0;
 WiFiMulti multi;
 #endif
 
+
 // Função de callback do upload do Firebase
 void fcsUploadCallback(CFS_UploadStatusInfo info)
 {
@@ -159,7 +160,9 @@ void setup() {
 
 void loop() {
 
-  if (millis() - dataMillis > 60000 || dataMillis == 0)
+  bool irrigado = false;
+
+  if (millis() - dataMillis > 20000 || dataMillis == 0)
   {
     dataMillis = millis();
 
@@ -180,12 +183,15 @@ void loop() {
       if(PorcentoNivel >= 300) {
         Serial.println("Irrigando a planta ..."); 
         digitalWrite(pinoRele, LOW); 
+        irrigado = true;
       } else {
+        irrigado = false;
         Serial.println("Reservatorio vazio, nao irrigar ..."); 
         digitalWrite(pinoRele, HIGH);
       }
     }
     else {
+      irrigado = false;
       Serial.println("Planta Irrigada ...");
       digitalWrite(pinoRele, HIGH);
     }
@@ -195,11 +201,19 @@ void loop() {
     if (Firebase.ready()) {
       FirebaseJson content;
 
+      int timestamp;
+      timestamp = gettimeofday();
+
       String documentPath = "/0/";
       documentPath += auth.token.uid.c_str();
       
       content.set("fields/umidade/integerValue", String(PorcentoUmidade));
       content.set("fields/reservatorio/integerValue", String(PorcentoNivel));
+
+      if (irrigado) {
+        content.set("fields/datairrigado/integerValue", timestamp);
+      }
+      content.set("fields/dataleitura/integerValue", timestamp);
       if (!taskcomplete)
       {
         taskcomplete = true;
@@ -216,7 +230,7 @@ void loop() {
       else
       {
         Serial.print("Atualizando documento no Firebase... ");
-        if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "umidade,reservatorio")) 
+        if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "umidade,reservatorio,datairrigado,dataleitura")) 
         {
           Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
         }
