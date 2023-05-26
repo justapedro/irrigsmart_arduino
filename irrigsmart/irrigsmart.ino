@@ -33,11 +33,15 @@
 #define pino5V2 5
 
 #define WIFI_SSID "Pedro"
-#define WIFI_PASSWORD "pedro*1313"
+#define WIFI_PASSWORD "17052005"
 #define API_KEY "AIzaSyC6ENp5kcG9gEss7kN7qpHml6GnPSBJ4sg"
 #define FIREBASE_PROJECT_ID "irrigsmart-fe662"
 #define USER_EMAIL "teste@teste.com"
 #define USER_PASSWORD "teste123"
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = -10800;
+const int   daylightOffset_sec = 3600;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
@@ -109,7 +113,7 @@ void setup() {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   #endif
 
-  Serial.print("Connecting to Wi-Fi");
+  Serial.print("Conectando ao Wi-Fi");
   unsigned long ms = millis();
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -122,7 +126,7 @@ void setup() {
   }
 
   Serial.println();
-  Serial.print("Connected with IP: ");
+  Serial.print("Conectado com o IP: ");
   Serial.println(WiFi.localIP());
   Serial.println();
 
@@ -154,22 +158,28 @@ void setup() {
 
   Firebase.reconnectWiFi(true);
 
+  Serial.println("Conectando ao servidor de tempo");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  
   // For sending payload callback
   // config.cfs.upload_callback = fcsUploadCallback;
 }
+
 
 void loop() {
 
   bool irrigado = false;
 
-  if (millis() - dataMillis > 20000 || dataMillis == 0)
+  if (millis() - dataMillis > 5000 || dataMillis == 0)
   {
     dataMillis = millis();
 
     digitalWrite(LED_BUILTIN, HIGH); 
     ValAnalogUmidade = analogRead(pinoSU); 
     int PorcentoUmidade = map(ValAnalogUmidade, 4095, 0, 0, 100);
-    Serial.print("Nivel da umidade: ");
+    Serial.print("Nivel da umidade (A): ");
+    Serial.print(ValAnalogUmidade);    
+    Serial.println("Nivel da umidade (%): ");
     Serial.print(PorcentoUmidade);
     Serial.print("%");
     Serial.println(" ");
@@ -201,19 +211,27 @@ void loop() {
     if (Firebase.ready()) {
       FirebaseJson content;
 
-      int timestamp;
-      timestamp = gettimeofday();
+      // Obter tempo
+      struct tm timeinfo;
+            
+      if(!getLocalTime(&timeinfo)){
+      Serial.println("Falha ao obter tempo");
+      }
+      else {
+  
+      Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");        
+      }      
 
       String documentPath = "/0/";
       documentPath += auth.token.uid.c_str();
       
       content.set("fields/umidade/integerValue", String(PorcentoUmidade));
       content.set("fields/reservatorio/integerValue", String(PorcentoNivel));
-
+      Serial.println(String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
       if (irrigado) {
-        content.set("fields/datairrigado/integerValue", timestamp);
+        content.set("fields/datairrigado/stringValue", String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
       }
-      content.set("fields/dataleitura/integerValue", timestamp);
+      content.set("fields/dataleitura/stringValue", String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
       if (!taskcomplete)
       {
         taskcomplete = true;
