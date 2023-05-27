@@ -20,6 +20,11 @@
 #include <ESP8266WiFi.h>
 #endif
 
+#include <HTTPClient.h>
+#include <DNSServer.h> 
+#include <WebServer.h>
+#include <WiFiManager.h>
+
 // Bibliotecas do Firebase 
 // para comunicação com banco de dados
 #include <Firebase_ESP_Client.h>
@@ -32,21 +37,21 @@
 #define pino5V 4
 #define pino5V2 5
 
-#define WIFI_SSID "Pedro"
-#define WIFI_PASSWORD "17052005"
 #define API_KEY "AIzaSyC6ENp5kcG9gEss7kN7qpHml6GnPSBJ4sg"
 #define FIREBASE_PROJECT_ID "irrigsmart-fe662"
 #define USER_EMAIL "teste@teste.com"
 #define USER_PASSWORD "teste123"
 
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = -10800;
+const long  gmtOffset_sec = -3600;
 const int   daylightOffset_sec = 3600;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
 int ValAnalogNivel; // Leitura do Sensor de Nível
 bool taskcomplete = false;
+
+WiFiManager wifiManager;
 
 FirebaseData fbdo;
 FirebaseAuth auth;
@@ -85,6 +90,18 @@ void fcsUploadCallback(CFS_UploadStatusInfo info)
     }
 }
 
+//callback que indica que o ESP entrou no modo AP
+void configModeCallback (WiFiManager *myWiFiManager) {  
+  Serial.println("Entrou no modo de configuração");
+  Serial.println(WiFi.softAPIP()); //imprime o IP do AP
+  Serial.println(myWiFiManager->getConfigPortalSSID()); //imprime o SSID criado da rede
+}
+ 
+//Callback que indica que salvamos uma nova rede para se conectar (modo estação)
+void saveConfigCallback () {
+  Serial.println("Configuração salva");
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.println("Projeto IrrigSmart");
@@ -98,71 +115,73 @@ void setup() {
   digitalWrite(pino5V2, HIGH);
   Serial.println("[I] Pinos ativados");
 
-  Serial.println("[I] Iniciando conexão Wi-Fi");
-  #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
-    multi.addAP(WIFI_SSID, WIFI_PASSWORD);
-    multi.run();
-  #else
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  #endif
-
-  #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
-    multi.addAP(WIFI_SSID, WIFI_PASSWORD);
-    multi.run();
-  #else
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  #endif
-
-  Serial.print("Conectando ao Wi-Fi");
-  unsigned long ms = millis();
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.print(".");
-    delay(300);
-    #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
-      if (millis() - ms > 10000)
-        break;
-      #endif
+  Serial.println("Abertura Portal");
+  wifiManager.setAPCallback(configModeCallback); 
+  wifiManager.setSaveConfigCallback(saveConfigCallback); 
+  wifiManager.resetSettings();
+  if(!wifiManager.startConfigPortal("IrrigSmart") ){ //Nome da Rede e Senha gerada pela ESP
+    Serial.println("Falha ao conectar"); //Se caso não conectar na rede mostra mensagem de falha
+    delay(2000);
+    ESP.restart(); //Reinicia ESP após não conseguir conexão na rede
+  }
+  else{       //Se caso conectar 
+    Serial.println("Conectado na Rede!!!");
   }
 
-  Serial.println();
-  Serial.print("Conectado com o IP: ");
-  Serial.println(WiFi.localIP());
-  Serial.println();
+  if(WiFi.status()== WL_CONNECTED){ //Se conectado na rede
+    digitalWrite(LED_BUILTIN, HIGH);
 
-  Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+    unsigned long ms = millis();
+    while (WiFi.status() != WL_CONNECTED)
+    {
+      Serial.print(".");
+      delay(300);
+      #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
+        if (millis() - ms > 10000)
+          break;
+        #endif
+    }
 
-  config.api_key = API_KEY;
-  auth.user.email = USER_EMAIL;
-  auth.user.password = USER_PASSWORD;
+    Serial.println();
+    Serial.print("Conectado com o IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.println();
 
-  // The WiFi credentials are required for Pico W
-  // due to it does not have reconnect feature.
-  #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
-    config.wifi.clearAP();
-    config.wifi.addAP(WIFI_SSID, WIFI_PASSWORD);
-  #endif
+    Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
 
-  /* Assign the callback function for the long running token generation task */
-  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+    config.api_key = API_KEY;
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_PASSWORD;
 
-  #if defined(ESP8266)
-    // In ESP8266 required for BearSSL rx/tx buffer for large data handle, increase Rx size as needed.
-    fbdo.setBSSLBufferSize(2048 /* Rx buffer size in bytes from 512 - 16384 */, 2048 /* Tx buffer size in bytes from 512 - 16384 */);
-  #endif
+    // The WiFi credentials are required for Pico W
+    // due to it does not have reconnect feature.
+    #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
+      config.wifi.clearAP();
+      config.wifi.addAP(WIFI_SSID, WIFI_PASSWORD);
+    #endif
 
-  // Limit the size of response payload to be collected in FirebaseData
-  fbdo.setResponseSize(2048);
+    /* Assign the callback function for the long running token generation task */
+    config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
 
-  Firebase.begin(&config, &auth);
+    #if defined(ESP8266)
+      // In ESP8266 required for BearSSL rx/tx buffer for large data handle, increase Rx size as needed.
+      fbdo.setBSSLBufferSize(2048 /* Rx buffer size in bytes from 512 - 16384 */, 2048 /* Tx buffer size in bytes from 512 - 16384 */);
+    #endif
 
-  Firebase.reconnectWiFi(true);
+    // Limit the size of response payload to be collected in FirebaseData
+    fbdo.setResponseSize(2048);
 
-  Serial.println("Conectando ao servidor de tempo");
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  
-  // For sending payload callback
-  // config.cfs.upload_callback = fcsUploadCallback;
+    Firebase.begin(&config, &auth);
+
+    Firebase.reconnectWiFi(true);
+
+    Serial.println("Conectando ao servidor de tempo");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    
+    // For sending payload callback
+    // config.cfs.upload_callback = fcsUploadCallback;
+  }
+
 }
 
 
@@ -208,18 +227,19 @@ void loop() {
     delay (1000);
     digitalWrite(LED_BUILTIN, LOW); 
 
-    if (Firebase.ready()) {
+    if (WiFi.status()== WL_CONNECTED && Firebase.ready()) {
       FirebaseJson content;
 
       // Obter tempo
       struct tm timeinfo;
+      char buffer[30];
             
       if(!getLocalTime(&timeinfo)){
       Serial.println("Falha ao obter tempo");
       }
       else {
-  
-      Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");        
+      strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+      Serial.println(buffer);
       }      
 
       String documentPath = "/0/";
@@ -227,11 +247,11 @@ void loop() {
       
       content.set("fields/umidade/integerValue", String(PorcentoUmidade));
       content.set("fields/reservatorio/integerValue", String(PorcentoNivel));
-      Serial.println(String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
+      Serial.println((&timeinfo, "%d/%B/%Y %H:%M:%S"));
       if (irrigado) {
-        content.set("fields/datairrigado/stringValue", String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
+        content.set("fields/datairrigado/timestampValue", buffer);
       }
-      content.set("fields/dataleitura/stringValue", String(&timeinfo, "%d/%B/%Y %H:%M:%S"));
+      content.set("fields/dataleitura/timestampValue", buffer);
       if (!taskcomplete)
       {
         taskcomplete = true;
