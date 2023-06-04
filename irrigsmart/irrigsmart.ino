@@ -33,9 +33,11 @@
 // Definição de pinos e valores
 #define pinoSU A0
 #define pinoSN A3
+#define pinoBoia 18
 #define pinoRele 23
 #define pino5V 4
 #define pino5V2 5
+#define pino5V3 19
 
 #define API_KEY "AIzaSyC6ENp5kcG9gEss7kN7qpHml6GnPSBJ4sg"
 #define FIREBASE_PROJECT_ID "irrigsmart-fe662"
@@ -45,6 +47,8 @@
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -3600;
 const int   daylightOffset_sec = 3600;
+const int   refreshsec = 30000;
+const int   watersec = 5000;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
@@ -70,65 +74,70 @@ void fcsUploadCallback(CFS_UploadStatusInfo info)
 {
     if (info.status == fb_esp_cfs_upload_status_init)
     {
-        Serial.printf("\nEnviando dados (%d)...\n", info.size);
+        Serial.printf("\n[FB] Enviando dados (%d)...\n", info.size);
     }
     else if (info.status == fb_esp_cfs_upload_status_upload)
     {
-        Serial.printf("Enviado %d%s\n", (int)info.progress, "%");
+        Serial.printf("[FB] Enviado %d%s\n", (int)info.progress, "%");
     }
     else if (info.status == fb_esp_cfs_upload_status_complete)
     {
-        Serial.println("Dados enviados com sucesso ");
+        Serial.println("[FB] Dados enviados com sucesso ");
     }
     else if (info.status == fb_esp_cfs_upload_status_process_response)
     {
-        Serial.print("Processando resposta... ");
+        Serial.print("[FB] Processando resposta... ");
     }
     else if (info.status == fb_esp_cfs_upload_status_error)
     {
-        Serial.printf("Falha no envio de dados, %s\n", info.errorMsg.c_str());
+        Serial.printf("[FB] Falha no envio de dados, %s\n", info.errorMsg.c_str());
     }
 }
 
 //callback que indica que o ESP entrou no modo AP
 void configModeCallback (WiFiManager *myWiFiManager) {  
-  Serial.println("Entrou no modo de configuração");
+  Serial.println("[WM] Entrou no modo de configuração");
   Serial.println(WiFi.softAPIP()); //imprime o IP do AP
   Serial.println(myWiFiManager->getConfigPortalSSID()); //imprime o SSID criado da rede
 }
  
 //Callback que indica que salvamos uma nova rede para se conectar (modo estação)
 void saveConfigCallback () {
-  Serial.println("Configuração salva");
+  Serial.println("[WM] Configuração salva");
 }
 
 void setup() {
   Serial.begin(9600);
   Serial.println("Projeto IrrigSmart");
 
-  Serial.println("[I] Ativando pinos");
+  Serial.println("[I] Ativando pinos... ");
   pinMode(pinoRele, OUTPUT);
   pinMode(pino5V, OUTPUT);
   pinMode(pino5V2, OUTPUT);
+  pinMode(pinoBoia, INPUT);
+  pinMode(pino5V3, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(pinoRele, HIGH);
   digitalWrite(pino5V, HIGH);
   digitalWrite(pino5V2, HIGH);
-  Serial.println("[I] Pinos ativados");
+  digitalWrite(pino5V3, LOW);
+  Serial.print("OK");
 
-  Serial.println("Abertura Portal");
+  Serial.println("[WM] Inicializando Portal");
   wifiManager.setAPCallback(configModeCallback); 
   wifiManager.setSaveConfigCallback(saveConfigCallback); 
   wifiManager.resetSettings();
   if(!wifiManager.startConfigPortal("IrrigSmart") ){ //Nome da Rede e Senha gerada pela ESP
-    Serial.println("Falha ao conectar"); //Se caso não conectar na rede mostra mensagem de falha
+    Serial.println("[WM] Falha ao conectar, reiniciando..."); //Se caso não conectar na rede mostra mensagem de falha
     delay(2000);
     ESP.restart(); //Reinicia ESP após não conseguir conexão na rede
   }
   else{       //Se caso conectar 
-    Serial.println("Conectado na Rede!!!");
+    Serial.println("[WM] Conectado na Rede!");
   }
 
   if(WiFi.status()== WL_CONNECTED){ //Se conectado na rede
+    
     digitalWrite(LED_BUILTIN, HIGH);
 
     unsigned long ms = millis();
@@ -147,71 +156,67 @@ void setup() {
     Serial.println(WiFi.localIP());
     Serial.println();
 
-    Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+    // Configuração do Firebase
+
+    Serial.printf("[FB] Inicializando Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
 
     config.api_key = API_KEY;
     auth.user.email = USER_EMAIL;
     auth.user.password = USER_PASSWORD;
 
-    // The WiFi credentials are required for Pico W
-    // due to it does not have reconnect feature.
     #if defined(ARDUINO_RASPBERRY_PI_PICO_W)
       config.wifi.clearAP();
       config.wifi.addAP(WIFI_SSID, WIFI_PASSWORD);
     #endif
 
-    /* Assign the callback function for the long running token generation task */
     config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
 
     #if defined(ESP8266)
-      // In ESP8266 required for BearSSL rx/tx buffer for large data handle, increase Rx size as needed.
-      fbdo.setBSSLBufferSize(2048 /* Rx buffer size in bytes from 512 - 16384 */, 2048 /* Tx buffer size in bytes from 512 - 16384 */);
+      fbdo.setBSSLBufferSize(2048, 2048 /* Tx buffer size in bytes from 512 - 16384 */);
     #endif
 
-    // Limit the size of response payload to be collected in FirebaseData
     fbdo.setResponseSize(2048);
-
     Firebase.begin(&config, &auth);
-
     Firebase.reconnectWiFi(true);
 
-    Serial.println("Conectando ao servidor de tempo");
+    Serial.println("[I] Conectando ao servidor de tempo online");
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    
-    // For sending payload callback
-    // config.cfs.upload_callback = fcsUploadCallback;
+
   }
 
 }
-
 
 void loop() {
 
   bool irrigado = false;
 
-  if (millis() - dataMillis > 5000 || dataMillis == 0)
+  if (millis() - dataMillis > refreshsec || dataMillis == 0)
   {
     dataMillis = millis();
 
     digitalWrite(LED_BUILTIN, HIGH); 
     ValAnalogUmidade = analogRead(pinoSU); 
-    int PorcentoUmidade = map(ValAnalogUmidade, 4095, 0, 0, 100);
+    int PorcentoUmidade = map(ValAnalogUmidade, 4095, 1365, 0, 100);
     Serial.print("Nivel da umidade (A): ");
     Serial.print(ValAnalogUmidade);    
-    Serial.println("Nivel da umidade (%): ");
+    Serial.print("\nNivel da umidade (%): ");
     Serial.print(PorcentoUmidade);
     Serial.print("%");
     Serial.println(" ");
 
-    int PorcentoNivel = analogRead(pinoSN); 
     Serial.print("Nivel do reservatorio: ");
-    Serial.print(PorcentoNivel);
+    Serial.print(digitalRead(pinoBoia));
     Serial.println(" ");
     
     if (PorcentoUmidade <= 45) {
-      if(PorcentoNivel >= 300) {
+      if(digitalRead(pinoBoia) == 1) {
         Serial.println("Irrigando a planta ..."); 
         digitalWrite(pinoRele, LOW); 
+        delay (watersec);
+        digitalWrite(pinoRele, HIGH); 
+        delay (1000);
+        ValAnalogUmidade = analogRead(pinoSU); 
+        PorcentoUmidade = map(ValAnalogUmidade, 4095, 1365, 0, 100);
         irrigado = true;
       } else {
         irrigado = false;
@@ -224,10 +229,11 @@ void loop() {
       Serial.println("Planta Irrigada ...");
       digitalWrite(pinoRele, HIGH);
     }
-    delay (1000);
     digitalWrite(LED_BUILTIN, LOW); 
+    digitalWrite(pinoRele, HIGH);
 
     if (WiFi.status()== WL_CONNECTED && Firebase.ready()) {
+      
       FirebaseJson content;
 
       // Obter tempo
@@ -235,30 +241,32 @@ void loop() {
       char buffer[30];
             
       if(!getLocalTime(&timeinfo)){
-      Serial.println("Falha ao obter tempo");
+        Serial.println("Falha ao obter tempo");
       }
       else {
-      strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-      Serial.println(buffer);
+        strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+        Serial.println(buffer);
       }      
 
+
+      //Envia dados para o firebase
       String documentPath = "/0/";
       documentPath += auth.token.uid.c_str();
       
       content.set("fields/umidade/integerValue", String(PorcentoUmidade));
-      content.set("fields/reservatorio/integerValue", String(PorcentoNivel));
-      Serial.println((&timeinfo, "%d/%B/%Y %H:%M:%S"));
-      if (irrigado) {
+      content.set("fields/reservatorio/integerValue", digitalRead(pinoBoia));
+      if (irrigado == true) {
         content.set("fields/datairrigado/timestampValue", buffer);
       }
       content.set("fields/dataleitura/timestampValue", buffer);
-      if (!taskcomplete)
+
+      if (!taskcomplete) 
       {
         taskcomplete = true;
-        Serial.print("Criando documento no Firebase... ");
+        Serial.print("[FB] Criando documento... ");
         if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw())) 
         {
-          Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
+          Serial.printf("ok");
         }
         else
         {
@@ -267,10 +275,10 @@ void loop() {
       } 
       else
       {
-        Serial.print("Atualizando documento no Firebase... ");
-        if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "umidade,reservatorio,datairrigado,dataleitura")) 
+        Serial.print("[FB] Atualizando documento... ");
+        if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), irrigado ? "umidade,reservatorio,datairrigado,dataleitura" : "umidade,reservatorio,dataleitura")) 
         {
-          Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
+          Serial.printf("ok\n");
         }
         else
         {
