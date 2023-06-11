@@ -32,12 +32,10 @@
 
 // Definição de pinos e valores
 #define pinoSU A0
-#define pinoSN A3
 #define pinoBoia 18
 #define pinoRele 23
 #define pino5V 4
 #define pino5V2 5
-#define pino5V3 19
 
 #define API_KEY "AIzaSyC6ENp5kcG9gEss7kN7qpHml6GnPSBJ4sg"
 #define FIREBASE_PROJECT_ID "irrigsmart-fe662"
@@ -47,8 +45,19 @@
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -3600;
 const int   daylightOffset_sec = 3600;
-const int   refreshsec = 600000;
+
+//tempo entre leituras
+const int   refreshsec = 15000;
+
+//Tempo que a bomba vai ficar acionada
 const int   watersec = 8000;
+
+//Porcentagem em que se tiver abaixo vai irrigar
+const int   waterpercentage = 45;
+
+//Valor analógico do sensor de umidade
+const int minimumval = 0;
+const int maximumval = 4095;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
@@ -115,15 +124,13 @@ void setup() {
   pinMode(pino5V, OUTPUT);
   pinMode(pino5V2, OUTPUT);
   pinMode(pinoBoia, INPUT);
-  pinMode(pino5V3, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(pinoRele, HIGH);
   digitalWrite(pino5V, HIGH);
   digitalWrite(pino5V2, HIGH);
-  digitalWrite(pino5V3, LOW);
   Serial.print("OK");
 
-  Serial.println("[WM] Inicializando Portal");
+    Serial.println("[WM] Inicializando Portal");
   wifiManager.setAPCallback(configModeCallback); 
   wifiManager.setSaveConfigCallback(saveConfigCallback); 
   wifiManager.resetSettings();
@@ -183,7 +190,6 @@ void setup() {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   }
-
 }
 
 void loop() {
@@ -196,9 +202,13 @@ void loop() {
 
     digitalWrite(LED_BUILTIN, HIGH); 
     ValAnalogUmidade = analogRead(pinoSU); 
-    int PorcentoUmidade = map(ValAnalogUmidade, 4095, 0, 0, 100);
+
+    //Converte leitura analógica para porcentagem
+    int PorcentoUmidade = map(ValAnalogUmidade, maximumval, minimumval, 0, 100);
+
     Serial.print("Nivel da umidade (A): ");
     Serial.print(ValAnalogUmidade);    
+
     Serial.print("\nNivel da umidade (%): ");
     Serial.print(PorcentoUmidade);
     Serial.print("%");
@@ -208,16 +218,23 @@ void loop() {
     Serial.print(digitalRead(pinoBoia));
     Serial.println(" ");
     
-    if (PorcentoUmidade <= 45) {
+
+  // Se a umidade estiver abaixo de:
+    if (PorcentoUmidade <= waterpercentage) {
+
+      // Se o reservatório estiver cheio
       if(digitalRead(pinoBoia) == 1) {
+
+        // Liga a bomba por x tempo, desliga e faz outra leitura
         Serial.println("Irrigando a planta ..."); 
         digitalWrite(pinoRele, LOW); 
         delay (watersec);
         digitalWrite(pinoRele, HIGH); 
         delay (1000);
         ValAnalogUmidade = analogRead(pinoSU); 
-        PorcentoUmidade = map(ValAnalogUmidade, 4095, 1365, 0, 100);
+        PorcentoUmidade = map(ValAnalogUmidade, maximumval, minimumval, 0, 100);
         irrigado = true;
+
       } else {
         irrigado = false;
         Serial.println("Reservatorio vazio, nao irrigar ..."); 
@@ -232,6 +249,7 @@ void loop() {
     digitalWrite(LED_BUILTIN, LOW); 
     digitalWrite(pinoRele, HIGH);
 
+    // Se conectado a internet e firebase funcionando == Enviar dados
     if (WiFi.status()== WL_CONNECTED && Firebase.ready()) {
       
       FirebaseJson content;
