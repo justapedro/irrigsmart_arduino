@@ -47,13 +47,13 @@
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -3600;
 const int   daylightOffset_sec = 3600;
-const int   refreshsec = 30000;
-const int   watersec = 5000;
+const int   refreshsec = 600000;
+const int   watersec = 8000;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
 int ValAnalogNivel; // Leitura do Sensor de Nível
-bool taskcomplete = false;
+bool taskcomplete = true;
 
 WiFiManager wifiManager;
 
@@ -196,7 +196,7 @@ void loop() {
 
     digitalWrite(LED_BUILTIN, HIGH); 
     ValAnalogUmidade = analogRead(pinoSU); 
-    int PorcentoUmidade = map(ValAnalogUmidade, 4095, 1365, 0, 100);
+    int PorcentoUmidade = map(ValAnalogUmidade, 4095, 0, 0, 100);
     Serial.print("Nivel da umidade (A): ");
     Serial.print(ValAnalogUmidade);    
     Serial.print("\nNivel da umidade (%): ");
