@@ -47,8 +47,8 @@
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -3600;
 const int   daylightOffset_sec = 3600;
-const int   refreshsec = 600000;
-const int   watersec = 8000;
+const int   refreshsec = 10000;
+const int   watersec = 4000;
 
 // Definição de variáveis
 int ValAnalogUmidade; // Leitura do Sensor de Umidade
@@ -254,7 +254,7 @@ void loop() {
       documentPath += auth.token.uid.c_str();
       
       content.set("fields/umidade/integerValue", String(PorcentoUmidade));
-      content.set("fields/reservatorio/integerValue", digitalRead(pinoBoia));
+      content.set("fields/reservatorio/integerValue", String("1"));
       if (irrigado == true) {
         content.set("fields/datairrigado/timestampValue", buffer);
       }
